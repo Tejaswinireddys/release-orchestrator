@@ -47,10 +47,16 @@ jobs:
         working-directory: orchestrator
         run: npm run build
 
+      # Mode resolution:
+      #  - Manual dispatch: use the chosen mode (live by default) — real APIs.
+      #  - Automatic run after Build Packages: default to MOCK so the pipeline
+      #    stays green without production secrets. Set repo variable
+      #    AUTO_DEPLOY_MODE=live (with the secrets/vars below populated) to make
+      #    the automatic path perform a real Confluence/Jira/Harness release.
       - name: Run release orchestration
         working-directory: orchestrator
         env:
-          RUN_MODE: ${{ github.event.inputs.mode || 'live' }}
+          RUN_MODE: ${{ github.event.inputs.mode || vars.AUTO_DEPLOY_MODE || 'mock' }}
           RELEASE_VERSION: ${{ github.event.inputs.release_version || github.ref_name }}
           REPO_ROOT: ${{ github.workspace }}
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
@@ -71,7 +77,9 @@ jobs:
           HARNESS_PROJECT_ID: ${{ vars.HARNESS_PROJECT_ID }}
           HARNESS_PIPELINE_ID: ${{ vars.HARNESS_PIPELINE_ID }}
           HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
-        run: node dist/cli.js --push --out "$GITHUB_WORKSPACE/release-run.json"
+        # Run via tsx so the in-process mock (mock mode) resolves its TS module.
+        # --push is only honoured in live mode; mock mode stubs docker push.
+        run: npx tsx src/cli.ts --push --out "$GITHUB_WORKSPACE/release-run.json"
 
       - name: Upload run report
         if: always()
