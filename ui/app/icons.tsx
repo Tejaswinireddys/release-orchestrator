@@ -56,6 +56,14 @@ export function IconRocket({ size = 16, color = "currentColor" }: IconProps) {
     </svg>
   );
 }
+export function IconSparkle({ size = 16, color = "currentColor" }: IconProps) {
+  return (
+    <svg {...base(size)} stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l1.8 4.9L18.7 9.7 13.8 11.5 12 16.4 10.2 11.5 5.3 9.7 10.2 7.9z" />
+      <path d="M18 15l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7z" />
+    </svg>
+  );
+}
 export function IconHome({ size = 16 }: IconProps) {
   return <svg {...base(size)} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M9 22V12h6v10" /></svg>;
 }

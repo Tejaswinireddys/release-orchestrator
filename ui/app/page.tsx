@@ -3,24 +3,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Logo, IconPackage, IconDocker, IconDoc, IconTicket, IconRocket,
-  IconHome, IconHistory, IconCog, IconArrow,
+  IconHome, IconHistory, IconCog, IconArrow, IconSparkle,
 } from "./icons";
 
-type StageName = "package" | "docker" | "confluence" | "jira" | "deploy";
+type StageName = "package" | "docker" | "summarize" | "confluence" | "jira" | "deploy";
 type StageStatus = "pending" | "running" | "success" | "failed" | "skipped";
 type RunMode = "live" | "mock";
 
-interface PackageDescriptor { name: string; version: string; changed: boolean; changes: string[]; image?: string; }
+interface PackageDescriptor { name: string; version: string; changed: boolean; changes: string[]; commits?: string[]; changedFiles?: string[]; aiSummary?: string; image?: string; }
+interface ReleaseSummary { aiGenerated: boolean; model?: string; overview: string; perPackage: Record<string, string>; }
 interface LogEntry { ts: string; stage: string; level: "info" | "warn" | "error"; message: string; }
 interface StageResult { stage: StageName; status: StageStatus; durationMs?: number; detail?: string; link?: string; }
 interface PipelineRun {
   id: string; releaseVersion: string; mode: RunMode; startedAt: string; finishedAt?: string;
-  status: StageStatus; packages: PackageDescriptor[]; stages: Record<StageName, StageResult>; logs: LogEntry[];
+  status: StageStatus; packages: PackageDescriptor[]; summary?: ReleaseSummary; stages: Record<StageName, StageResult>; logs: LogEntry[];
 }
 
 const STAGES: { name: StageName; label: string; Icon: any }[] = [
   { name: "package", label: "Package", Icon: IconPackage },
   { name: "docker", label: "Docker Build", Icon: IconDocker },
+  { name: "summarize", label: "AI Summary", Icon: IconSparkle },
   { name: "confluence", label: "Confluence", Icon: IconDoc },
   { name: "jira", label: "Jira RM", Icon: IconTicket },
   { name: "deploy", label: "Harness · ECS", Icon: IconRocket },
@@ -190,14 +192,14 @@ export default function Dashboard() {
               <div className="section-title">Packages</div>
               <div className="section-sub">Change detection from the release diff</div>
               <table className="tbl">
-                <thead><tr><th>Service</th><th>Version</th><th>Status</th><th>Changes</th></tr></thead>
+                <thead><tr><th>Service</th><th>Version</th><th>Status</th><th>What changed</th></tr></thead>
                 <tbody>
                   {(run?.packages ?? defaultPkgs(version)).map((p) => (
                     <tr key={p.name}>
                       <td className="mono">{p.name}</td>
                       <td className="mono" style={{ color: "var(--text-dim)" }}>{p.version}</td>
                       <td><span className={`chip ${p.changed ? "chip-changed" : ""}`}>{p.changed ? "changed" : "unchanged"}</span></td>
-                      <td style={{ color: "var(--text-dim)", fontSize: 12 }}>{p.changes.length ? p.changes.join("; ") : "—"}</td>
+                      <td style={{ color: "var(--text-dim)", fontSize: 12 }}>{p.aiSummary ? p.aiSummary : (p.changes.length ? p.changes.join("; ") : "—")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -220,6 +222,21 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+
+          {/* AI change summary */}
+          {run?.summary?.overview && (
+            <div className="card">
+              <div className="section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <IconSparkle size={16} color="var(--accent)" />
+                Release Change Summary
+                <span className="chip" style={{ marginLeft: 8 }}>
+                  {run.summary.aiGenerated ? `AI · ${run.summary.model ?? "openai"}` : "automated"}
+                </span>
+              </div>
+              <div className="section-sub">Generated from this build&apos;s commits and changed files, then written to Confluence and the Jira RM ticket</div>
+              <p style={{ color: "var(--text)", fontSize: 13, lineHeight: 1.6, marginTop: 8 }}>{run.summary.overview}</p>
+            </div>
+          )}
 
           {/* History */}
           <div className="card">

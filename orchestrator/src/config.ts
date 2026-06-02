@@ -37,6 +37,14 @@ export function loadConfig(overrides: Partial<OrchestratorConfig> = {}): Orchest
       pipelineId: process.env.HARNESS_PIPELINE_ID ?? "ecs_ec2_deploy",
       apiKey: process.env.HARNESS_API_KEY ?? "",
     },
+    ai: {
+      // AI is enabled whenever an OpenAI key is present. Absent key (CI/mock)
+      // falls back to a deterministic, commit-derived summary so builds stay green.
+      enabled: Boolean(process.env.OPENAI_API_KEY),
+      baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      apiKey: process.env.OPENAI_API_KEY ?? "",
+    },
   };
 
   if (mode === "mock") {

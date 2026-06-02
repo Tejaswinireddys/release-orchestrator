@@ -77,6 +77,11 @@ jobs:
           HARNESS_PROJECT_ID: ${{ vars.HARNESS_PROJECT_ID }}
           HARNESS_PIPELINE_ID: ${{ vars.HARNESS_PIPELINE_ID }}
           HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
+          # OpenAI change-summary intelligence (optional). If OPENAI_API_KEY is
+          # unset, the summarize stage falls back to a deterministic summary.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
         # Run via tsx so the in-process mock (mock mode) resolves its TS module.
         # --push is only honoured in live mode; mock mode stubs docker push.
         run: npx tsx src/cli.ts --push --out "$GITHUB_WORKSPACE/release-run.json"

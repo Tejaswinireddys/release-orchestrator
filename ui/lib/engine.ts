@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "crypto";
 
-export type StageName = "package" | "docker" | "confluence" | "jira" | "deploy";
+export type StageName = "package" | "docker" | "summarize" | "confluence" | "jira" | "deploy";
 export type StageStatus = "pending" | "running" | "success" | "failed" | "skipped";
 export type RunMode = "live" | "mock";
 
@@ -19,7 +19,16 @@ export interface PackageDescriptor {
   version: string;
   changed: boolean;
   changes: string[];
+  commits?: string[];
+  changedFiles?: string[];
+  aiSummary?: string;
   image?: string;
+}
+export interface ReleaseSummary {
+  aiGenerated: boolean;
+  model?: string;
+  overview: string;
+  perPackage: Record<string, string>;
 }
 export interface LogEntry {
   ts: string;
@@ -42,6 +51,7 @@ export interface PipelineRun {
   finishedAt?: string;
   status: StageStatus;
   packages: PackageDescriptor[];
+  summary?: ReleaseSummary;
   stages: Record<StageName, StageResult>;
   logs: LogEntry[];
 }
@@ -54,7 +64,7 @@ export const PACKAGE_NAMES = [
   "gateway-service",
 ] as const;
 
-const STAGE_ORDER: StageName[] = ["package", "docker", "confluence", "jira", "deploy"];
+const STAGE_ORDER: StageName[] = ["package", "docker", "summarize", "confluence", "jira", "deploy"];
 
 // In-memory run registry (process-lifetime). Adequate for a dashboard demo.
 const RUNS = new Map<string, PipelineRun>();
@@ -79,13 +89,79 @@ export function demoPackages(version: string): PackageDescriptor[] {
     "payment-service": ["fix(payment): idempotent refunds"],
     "inventory-service": ["feat(inventory): real-time stock sync"],
   };
+  const filesSet: Record<string, string[]> = {
+    "auth-service": ["packages/auth-service/src/index.js", "packages/auth-service/package.json"],
+    "payment-service": ["packages/payment-service/src/index.js"],
+    "inventory-service": ["packages/inventory-service/src/index.js"],
+  };
   return PACKAGE_NAMES.map((name) => ({
     name,
     path: `packages/${name}`,
     version,
     changed: name in changedSet,
     changes: changedSet[name] ?? [],
+    commits: changedSet[name] ?? [],
+    changedFiles: filesSet[name] ?? [],
   }));
+}
+
+/** Build a deterministic, commit-derived fallback summary (no AI). */
+function fallbackSummary(version: string, changed: PackageDescriptor[]): ReleaseSummary {
+  const perPackage: Record<string, string> = {};
+  for (const p of changed) {
+    const items = (p.commits ?? p.changes).map((c) => c.split("\n")[0]);
+    const files = (p.changedFiles ?? []).length;
+    perPackage[p.name] =
+      `${items.length} change${items.length === 1 ? "" : "s"}` +
+      (files ? `, ${files} file${files === 1 ? "" : "s"} touched` : "") +
+      (items.length ? `: ${items.join("; ")}.` : ".");
+  }
+  return {
+    aiGenerated: false,
+    overview:
+      `Release ${version} updates ${changed.length} package${changed.length === 1 ? "" : "s"}: ` +
+      `${changed.map((p) => p.name).join(", ")}. Summaries are derived from this build's commit history.`,
+    perPackage,
+  };
+}
+
+/** Call OpenAI to summarize the release; throws on failure (caller falls back). */
+async function aiSummarize(version: string, changed: PackageDescriptor[]): Promise<ReleaseSummary> {
+  const base = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+  const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  const system =
+    "You are a release engineer writing accurate software release notes from git commits and " +
+    "changed files. Respond ONLY with minified JSON " +
+    '{"overview": string, "perPackage": {"<package-name>": string}}.';
+  const user =
+    `Release ${version}. Changed packages: ${changed.map((p) => p.name).join(", ")}.\n\n` +
+    changed
+      .map(
+        (p) =>
+          `### ${p.name} (v${p.version})\nCommits:\n${(p.commits ?? p.changes)
+            .map((c) => `- ${c}`)
+            .join("\n")}\nFiles:\n${(p.changedFiles ?? []).map((f) => `- ${f}`).join("\n")}`,
+      )
+      .join("\n\n");
+  const res = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`OpenAI ${res.status}`);
+  const data = await res.json();
+  const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
+  const perPackage: Record<string, string> = {};
+  for (const p of changed) perPackage[p.name] = parsed.perPackage?.[p.name] ?? "";
+  return { aiGenerated: true, model, overview: parsed.overview ?? "", perPackage };
 }
 
 export interface StartOptions {
@@ -160,6 +236,37 @@ async function drive(run: PipelineRun) {
         log(run, "docker", "info", `Built & pushed ${p.image}`);
       }
       return { detail: `${changed.length} images built` };
+    });
+
+    await stage(run, "summarize", async () => {
+      if (changed.length === 0) return { skip: true, detail: "no changes to summarize" };
+      await sleep(400);
+      let summary: ReleaseSummary;
+      const aiEnabled = Boolean(process.env.OPENAI_API_KEY);
+      if (live && aiEnabled) {
+        try {
+          summary = await aiSummarize(run.releaseVersion, changed);
+          log(run, "summarize", "info", `AI change summary generated with ${summary.model}.`);
+        } catch (e) {
+          summary = fallbackSummary(run.releaseVersion, changed);
+          log(run, "summarize", "warn", `AI summary failed (${(e as Error).message}); used fallback.`);
+        }
+      } else {
+        summary = fallbackSummary(run.releaseVersion, changed);
+        log(
+          run,
+          "summarize",
+          "info",
+          aiEnabled
+            ? "Used deterministic change summary (mock mode)."
+            : "Used deterministic change summary (no OPENAI_API_KEY set).",
+        );
+      }
+      run.summary = summary;
+      for (const p of run.packages) {
+        if (summary.perPackage[p.name]) p.aiSummary = summary.perPackage[p.name];
+      }
+      return { detail: summary.aiGenerated ? `AI summary (${summary.model})` : "Automated summary" };
     });
 
     await stage(run, "confluence", async () => {

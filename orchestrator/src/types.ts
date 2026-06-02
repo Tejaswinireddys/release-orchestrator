@@ -8,6 +8,7 @@
 export type StageName =
   | "package"
   | "docker"
+  | "summarize"
   | "confluence"
   | "jira"
   | "deploy";
@@ -32,8 +33,30 @@ export interface PackageDescriptor {
   changed: boolean;
   /** Short list of human-readable changes (commit subjects). */
   changes: string[];
+  /** Full commit messages (subject + body) attributed to this package. */
+  commits?: string[];
+  /** Changed file paths attributed to this package. */
+  changedFiles?: string[];
+  /** AI-generated, human-readable summary of what changed in this package. */
+  aiSummary?: string;
   /** Fully-qualified image reference once the docker stage completes. */
   image?: string;
+}
+
+/**
+ * Output of the AI "summarize" stage: an overall release narrative plus a
+ * per-package summary keyed by package name. Produced from commit messages
+ * and changed files, with a deterministic fallback when AI is unavailable.
+ */
+export interface ReleaseSummary {
+  /** Whether the summary was produced by the AI model (vs. fallback). */
+  aiGenerated: boolean;
+  /** Model identifier used, when AI-generated. */
+  model?: string;
+  /** One- or two-paragraph overview of the whole release. */
+  overview: string;
+  /** Per-package human-readable change summary, keyed by package name. */
+  perPackage: Record<string, string>;
 }
 
 /** Per-package result of the docker build stage. */
@@ -95,6 +118,8 @@ export interface PipelineRun {
   finishedAt?: string;
   status: StageStatus;
   packages: PackageDescriptor[];
+  /** AI (or fallback) change summary for the release. */
+  summary?: ReleaseSummary;
   stages: Record<StageName, StageResult>;
   logs: LogEntry[];
 }
@@ -122,6 +147,16 @@ export interface OrchestratorConfig {
     orgId: string;
     projectId: string;
     pipelineId: string;
+    apiKey: string;
+  };
+  ai: {
+    /** Whether AI summarization is enabled (true when an API key is present). */
+    enabled: boolean;
+    /** OpenAI-compatible base URL (default https://api.openai.com/v1). */
+    baseUrl: string;
+    /** Model id, e.g. gpt-4o-mini. */
+    model: string;
+    /** API key; empty disables AI and triggers the deterministic fallback. */
     apiKey: string;
   };
 }

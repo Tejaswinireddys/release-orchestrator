@@ -10,6 +10,7 @@ import type {
   JiraResult,
   DeployResult,
   DockerBuildResult,
+  ReleaseSummary,
 } from "./types.js";
 import { Logger } from "./logger.js";
 import { detectPackages, type PackagerOptions } from "./stages/packager.js";
@@ -17,8 +18,16 @@ import { buildImages, type DockerExecutor } from "./stages/docker.js";
 import { ConfluenceClient } from "./integrations/confluence.js";
 import { JiraClient } from "./integrations/jira.js";
 import { HarnessClient } from "./integrations/harness.js";
+import { AiSummarizer, type ChatFn } from "./integrations/ai.js";
 
-const STAGE_ORDER: StageName[] = ["package", "docker", "confluence", "jira", "deploy"];
+const STAGE_ORDER: StageName[] = [
+  "package",
+  "docker",
+  "summarize",
+  "confluence",
+  "jira",
+  "deploy",
+];
 
 export interface RunOptions {
   repoRoot: string;
@@ -30,6 +39,8 @@ export interface RunOptions {
   pushImages?: boolean;
   /** Logger to attach (so a server can stream logs). */
   logger?: Logger;
+  /** Injectable AI chat transport (used by tests to avoid network). */
+  chatFn?: ChatFn;
 }
 
 /**
@@ -101,28 +112,60 @@ export class ReleaseOrchestrator {
         return results;
       });
 
-      // 3) CONFLUENCE change page
+      // 3) SUMMARIZE — AI-generated change summary from commits + files
+      const summary = await this.stage<ReleaseSummary>(run, "summarize", async () => {
+        if (changedPackages.length === 0) {
+          run.stages.summarize.status = "skipped";
+          return { aiGenerated: false, overview: "No package changes detected.", perPackage: {} };
+        }
+        const summarizer = new AiSummarizer(
+          this.cfg.ai,
+          opts.chatFn,
+        );
+        const result = await summarizer.summarize(this.cfg.releaseVersion, run.packages);
+        // Attach per-package AI summaries back onto the descriptors so the
+        // Confluence/Jira renderers and the UI can show them.
+        for (const p of run.packages) {
+          if (result.perPackage[p.name]) p.aiSummary = result.perPackage[p.name];
+        }
+        run.summary = result;
+        this.logger.info(
+          "summarize",
+          result.aiGenerated
+            ? `AI change summary generated with ${result.model} for ${changedPackages.length} package(s).`
+            : `Used deterministic change summary (AI disabled) for ${changedPackages.length} package(s).`,
+        );
+        return result;
+      });
+
+      // 4) CONFLUENCE change page
       const confluence = await this.stage<ConfluenceResult>(run, "confluence", async () => {
         const client = new ConfluenceClient(this.cfg.confluence);
-        const page = await client.createChangePage(this.cfg.releaseVersion, run.packages);
+        const page = await client.createChangePage(
+          this.cfg.releaseVersion,
+          run.packages,
+          run.summary,
+        );
         this.logger.info("confluence", `Created change page: ${page.url}`);
         return page;
       });
+      void summary;
 
-      // 4) JIRA RM ticket
+      // 5) JIRA RM ticket
       const jira = await this.stage<JiraResult>(run, "jira", async () => {
         const client = new JiraClient(this.cfg.jira);
         const ticket = await client.createReleaseTicket(
           this.cfg.releaseVersion,
           run.packages,
           confluence,
+          run.summary,
         );
         this.logger.info("jira", `Created RM ticket ${ticket.key}: ${ticket.url}`);
         return ticket;
       });
       void jira;
 
-      // 5) DEPLOY via Harness to ECS (EC2)
+      // 6) DEPLOY via Harness to ECS (EC2)
       await this.stage<DeployResult>(run, "deploy", async () => {
         const client = new HarnessClient(this.cfg.harness);
         const deploy = await client.triggerDeploy(
