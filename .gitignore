@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.next/
+out/
+*.log
+.DS_Store
+release-run.json
+coverage/
+.env
+.env.local
+*.tsbuildinfo
+next-env.d.ts
+
+# nested
+**/node_modules/
+**/dist/
+**/.next/
+docs/*.pdf
+docs/slide-*.jpg

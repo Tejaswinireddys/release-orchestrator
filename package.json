@@ -1,0 +1,21 @@
+{
+  "name": "release-orchestrator-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Enterprise release orchestration platform: package -> docker -> Confluence -> Jira -> Harness/ECS",
+  "workspaces": [
+    "orchestrator",
+    "mocks",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=orchestrator",
+    "test": "npm run test --workspace=orchestrator",
+    "test:e2e": "npm run e2e --workspace=orchestrator",
+    "mocks": "npm run start --workspace=mocks",
+    "orchestrate": "npm run start --workspace=orchestrator"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

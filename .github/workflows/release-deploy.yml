@@ -1,0 +1,81 @@
+name: Release & Deploy
+
+# Stage 3-5: triggered after the package/docker build completes on a tag.
+# Runs the orchestrator CLI which: creates the Confluence change page, opens
+# the Jira RM ticket, then triggers the Harness pipeline to deploy to the
+# ECS (EC2) cluster.
+on:
+  workflow_run:
+    workflows: ["Build Packages"]
+    types: [completed]
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version"
+        required: true
+        default: "1.0.0"
+      mode:
+        description: "Run mode (live or mock)"
+        required: true
+        default: "live"
+
+permissions:
+  contents: read
+
+jobs:
+  orchestrate:
+    name: Confluence → Jira → Harness/ECS
+    # Only run when the upstream build succeeded (or on manual dispatch).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the packager can diff changes
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Build orchestrator
+        working-directory: orchestrator
+        run: npm run build
+
+      - name: Run release orchestration
+        working-directory: orchestrator
+        env:
+          RUN_MODE: ${{ github.event.inputs.mode || 'live' }}
+          RELEASE_VERSION: ${{ github.event.inputs.release_version || github.ref_name }}
+          REPO_ROOT: ${{ github.workspace }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          # Confluence
+          CONFLUENCE_BASE_URL: ${{ vars.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_SPACE_KEY: ${{ vars.CONFLUENCE_SPACE_KEY }}
+          CONFLUENCE_TOKEN: ${{ secrets.CONFLUENCE_TOKEN }}
+          # Jira
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}
+          JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
+          JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+          # Harness
+          HARNESS_BASE_URL: ${{ vars.HARNESS_BASE_URL }}
+          HARNESS_ACCOUNT_ID: ${{ secrets.HARNESS_ACCOUNT_ID }}
+          HARNESS_ORG_ID: ${{ vars.HARNESS_ORG_ID }}
+          HARNESS_PROJECT_ID: ${{ vars.HARNESS_PROJECT_ID }}
+          HARNESS_PIPELINE_ID: ${{ vars.HARNESS_PIPELINE_ID }}
+          HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
+        run: node dist/cli.js --push --out "$GITHUB_WORKSPACE/release-run.json"
+
+      - name: Upload run report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-run-report
+          path: release-run.json

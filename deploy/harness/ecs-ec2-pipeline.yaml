@@ -1,0 +1,59 @@
+# Harness CD pipeline that deploys all release images to an ECS cluster using
+# the EC2 launch type. The orchestrator triggers this pipeline via the Harness
+# Pipeline Execution API, passing releaseVersion / ecsCluster / images.
+pipeline:
+  name: ECS EC2 Deploy
+  identifier: ecs_ec2_deploy
+  projectIdentifier: release
+  orgIdentifier: default
+  tags: {}
+  properties:
+    ci: {}
+  variables:
+    - name: releaseVersion
+      type: String
+      description: Semantic version being deployed
+      value: <+input>
+    - name: ecsCluster
+      type: String
+      description: Target ECS cluster (EC2 launch type)
+      value: release-ec2-cluster
+    - name: launchType
+      type: String
+      value: EC2
+  stages:
+    - stage:
+        name: Deploy to ECS (EC2)
+        identifier: deploy_ecs_ec2
+        type: Deployment
+        spec:
+          deploymentType: ECS
+          service:
+            serviceRef: release_services
+          environment:
+            environmentRef: production
+            infrastructureDefinitions:
+              - identifier: ecs_ec2_infra
+          execution:
+            steps:
+              - step:
+                  name: ECS Rolling Deploy
+                  identifier: ecsRollingDeploy
+                  type: EcsRollingDeploy
+                  timeout: 15m
+                  spec:
+                    sameAsAlreadyRunningInstances: false
+                    forceNewDeployment: true
+            rollbackSteps:
+              - step:
+                  name: ECS Rolling Rollback
+                  identifier: ecsRollingRollback
+                  type: EcsRollingRollback
+                  timeout: 15m
+                  spec: {}
+        tags: {}
+        failureStrategies:
+          - onFailure:
+              errors: [AllErrors]
+              action:
+                type: StageRollback
