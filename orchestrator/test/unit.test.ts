@@ -65,6 +65,44 @@ describe("docker stage", () => {
     expect(calls.some((c) => c.startsWith("docker build"))).toBe(true);
     expect(calls.some((c) => c.startsWith("docker push"))).toBe(true);
   });
+
+  it("skips builds but still emits image refs when Docker is unavailable", () => {
+    const pkgs: PackageDescriptor[] = [
+      { name: "auth-service", path: "packages/auth-service", version: "1.0.0", changed: true, changes: ["x"] },
+    ];
+    const results = buildImages(pkgs, {
+      repoRoot,
+      ecrRegistry: "acct.dkr.ecr.us-east-1.amazonaws.com",
+      version: "1.0.0",
+      push: true,
+      // Simulate a laptop with no Docker daemon. No exec override so the
+      // availability probe is the one that decides.
+      isDockerAvailable: () => false,
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0].skipped).toBe(true);
+    expect(results[0].pushed).toBe(false);
+    expect(results[0].image).toContain("auth-service:1.0.0");
+    expect(results[0].digest).toMatch(/^sha256:/);
+    // The package still gets a resolved image reference for downstream stages.
+    expect(pkgs[0].image).toContain("auth-service:1.0.0");
+  });
+
+  it("throws when Docker is unavailable but required", () => {
+    const pkgs: PackageDescriptor[] = [
+      { name: "auth-service", path: "packages/auth-service", version: "1.0.0", changed: true, changes: ["x"] },
+    ];
+    expect(() =>
+      buildImages(pkgs, {
+        repoRoot,
+        ecrRegistry: "acct.dkr.ecr.us-east-1.amazonaws.com",
+        version: "1.0.0",
+        push: false,
+        requireDocker: true,
+        isDockerAvailable: () => false,
+      }),
+    ).toThrow(/Docker is required/);
+  });
 });
 
 describe("confluence body rendering", () => {

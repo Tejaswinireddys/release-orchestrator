@@ -35,6 +35,8 @@ export interface RunOptions {
   packagerOverrides?: Pick<PackagerOptions, "gitDiff" | "gitLog">;
   /** Injectable docker executor (used by tests/mocks/CI). */
   dockerExec?: DockerExecutor;
+  /** Injectable Docker availability probe (used by tests). */
+  isDockerAvailable?: () => boolean;
   /** Whether to push images (true in CI release builds). */
   pushImages?: boolean;
   /** Logger to attach (so a server can stream logs). */
@@ -93,7 +95,9 @@ export class ReleaseOrchestrator {
         this.logger.warn("pipeline", "No changed packages; downstream stages will be skipped.");
       }
 
-      // 2) DOCKER (one build per changed package)
+      // 2) DOCKER (one build per changed package). Docker is optional for
+      // local runs: if no daemon is available the build is skipped but image
+      // references are still produced so the pipeline runs end-to-end.
       await this.stage<DockerBuildResult[]>(run, "docker", async () => {
         if (changedPackages.length === 0) {
           run.stages.docker.status = "skipped";
@@ -105,9 +109,21 @@ export class ReleaseOrchestrator {
           version: this.cfg.releaseVersion,
           push: opts.pushImages ?? false,
           exec: opts.dockerExec,
+          requireDocker: this.cfg.docker.required,
+          isDockerAvailable: opts.isDockerAvailable,
         });
+        const skipped = results.filter((r) => r.skipped).length;
+        if (skipped > 0) {
+          this.logger.warn(
+            "docker",
+            `Docker not available — skipped building ${skipped} image(s); using deterministic image references so the pipeline can continue. Set REQUIRE_DOCKER=1 to make this a hard failure.`,
+          );
+        }
         for (const r of results) {
-          this.logger.info("docker", `Built ${r.image} (${r.digest.slice(0, 19)}…) pushed=${r.pushed}`);
+          this.logger.info(
+            "docker",
+            `${r.skipped ? "Resolved (no build)" : "Built"} ${r.image} (${r.digest.slice(0, 19)}…) pushed=${r.pushed}`,
+          );
         }
         return results;
       });

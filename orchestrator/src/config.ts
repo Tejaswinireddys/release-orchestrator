@@ -45,6 +45,12 @@ export function loadConfig(overrides: Partial<OrchestratorConfig> = {}): Orchest
       model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       apiKey: process.env.OPENAI_API_KEY ?? "",
     },
+    docker: {
+      // Docker is optional by default so the pipeline runs on a laptop (e.g. a
+      // Mac without Docker Desktop): a missing daemon is skipped gracefully.
+      // Set REQUIRE_DOCKER=1 in CI/production to make it a hard requirement.
+      required: /^(1|true|yes)$/i.test(process.env.REQUIRE_DOCKER ?? ""),
+    },
   };
 
   if (mode === "mock") {

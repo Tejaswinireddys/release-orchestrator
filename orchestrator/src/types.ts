@@ -65,6 +65,13 @@ export interface DockerBuildResult {
   image: string;
   digest: string;
   pushed: boolean;
+  /**
+   * True when the real `docker build`/`docker push` were skipped because no
+   * Docker daemon was available (e.g. a Mac laptop without Docker Desktop).
+   * The image reference + a deterministic digest are still produced so the
+   * rest of the pipeline (summary, Confluence, Jira, deploy) can run.
+   */
+  skipped?: boolean;
 }
 
 /** Result of creating the Confluence change page. */
@@ -158,5 +165,14 @@ export interface OrchestratorConfig {
     model: string;
     /** API key; empty disables AI and triggers the deterministic fallback. */
     apiKey: string;
+  };
+  docker: {
+    /**
+     * When true, a missing Docker daemon is a hard error (CI/production).
+     * When false (the default), the docker stage gracefully skips the real
+     * build/push if Docker is unavailable so the pipeline still runs on a
+     * laptop without Docker installed. Driven by REQUIRE_DOCKER.
+     */
+    required: boolean;
   };
 }
